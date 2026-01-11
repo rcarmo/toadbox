@@ -29,8 +29,13 @@ class CreateInstanceScreen(ModalScreen[Optional[ToadboxInstance]]):
     #create-form {
         height: 1fr;
         layout: vertical;
-        row-gap: 1;
         overflow: auto;
+    }
+
+    #create-form > Label,
+    #create-form > Input,
+    #create-form > Select {
+        margin-top: 1;
     }
 
     #name-browse-row {
