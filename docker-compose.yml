@@ -13,8 +13,6 @@ services:
       - ${WORKSPACE_PATH:-./workspace}:/workspace
       # Persist Docker data per instance
       - ${COMPOSE_PROJECT_NAME:-toadbox}_docker_data:/var/lib/docker
-      # Persist user home directory per instance
-      - ${COMPOSE_PROJECT_NAME:-toadbox}_home:/home/user
     privileged: true  # Required for Docker-in-Docker
     environment:
       - DISPLAY=:1
@@ -33,8 +31,6 @@ services:
 volumes:
   toadbox_docker_data:
     name: ${COMPOSE_PROJECT_NAME:-toadbox}_docker_data
-  toadbox_home:
-    name: ${COMPOSE_PROJECT_NAME:-toadbox}_home
 
 networks:
   toadbox_network:

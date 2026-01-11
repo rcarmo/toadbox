@@ -210,19 +210,37 @@ USER root
 
 # Configure xrdp to use user's .xsession
 RUN cat > /etc/xrdp/startwm.sh <<'STARTWM'
-#!/bin/sh
-# Load environment
-if test -r /etc/profile; then
-    . /etc/profile
+#!/bin/bash
+set -e
+
+# Wait for X to be ready
+sleep 1
+
+# Set up DISPLAY if not set
+export DISPLAY=${DISPLAY:-:10}
+
+# Set up runtime dir
+export XDG_RUNTIME_DIR=/tmp/runtime-$(whoami)
+mkdir -p $XDG_RUNTIME_DIR
+chmod 700 $XDG_RUNTIME_DIR
+
+# Unset problematic variables
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+# Start dbus session
+if command -v dbus-launch >/dev/null 2>&1; then
+    eval $(dbus-launch --sh-syntax)
 fi
-if test -r ~/.profile; then
-    . ~/.profile
-fi
-# Run user's xsession
-if test -x ~/.xsession; then
-    exec ~/.xsession
-fi
-# Fallback to openbox directly
+
+# Set background
+xsetroot -solid grey || true
+
+# Start panel and terminal in background
+lxpanel &
+lxterminal &
+
+# Run openbox in foreground - this keeps the session alive
 exec openbox
 STARTWM
 RUN chmod +x /etc/xrdp/startwm.sh
