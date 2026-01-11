@@ -40,7 +40,7 @@ The Toadbox Manager is a first stab at a TUI for easily managing multiple toadbo
 2. Run the quick start script:
 
 ```bash
-./start-manager.sh
+./run-manager.sh
 ```
 
 **Manager Features:**
