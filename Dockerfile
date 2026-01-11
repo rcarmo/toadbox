@@ -174,7 +174,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | HOME=/home/user sh && \
 USER user
 WORKDIR /home/user
 RUN mkdir -p ~/.vnc && \
-    echo "#!/bin/bash" > ~/.vnc/xstartup && \
+    echo "#!/bin/sh" > ~/.vnc/xstartup && \
     echo "unset SESSION_MANAGER" >> ~/.vnc/xstartup && \
     echo "unset DBUS_SESSION_BUS_ADDRESS" >> ~/.vnc/xstartup && \
     echo "xrdb $HOME/.Xresources" >> ~/.vnc/xstartup && \
@@ -182,6 +182,7 @@ RUN mkdir -p ~/.vnc && \
     echo "openbox-session &" >> ~/.vnc/xstartup && \
     echo "lxpanel &" >> ~/.vnc/xstartup && \
     echo "lxterminal &" >> ~/.vnc/xstartup && \
+    echo "exec tail -f /dev/null" >> ~/.vnc/xstartup && \
     chmod +x ~/.vnc/xstartup
 
 # Runtime scripts (modeled after rcarmo/docker-templates desktop-chrome)
@@ -221,8 +222,28 @@ if [[ "$AUTHMODE" != *"SecurityTypes None"* ]]; then
     su - user -c "chmod 600 ~/.vnc/passwd"
 fi
 
-# start VNC server
-su - user -c "vncserver :1 $AUTHMODE $SETTINGS"
+# Ensure we have a minimally functional xstartup even if the user's xstartup is broken.
+if [ ! -f /home/user/.vnc/xstartup ]; then
+    install -d -m 700 -o user -g user /home/user/.vnc
+    cat > /home/user/.vnc/xstartup <<'XEOF'
+#!/bin/sh
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+xsetroot -solid grey
+
+# Start a session that keeps running
+openbox-session &
+lxpanel &
+lxterminal &
+
+exec tail -f /dev/null
+XEOF
+    chown user:user /home/user/.vnc/xstartup
+    chmod +x /home/user/.vnc/xstartup
+fi
+
+# start VNC server (force explicit xstartup to avoid "exited too early" issues)
+su - user -c "vncserver :1 -xstartup /home/user/.vnc/xstartup $AUTHMODE $SETTINGS"
 echo "VNC server started on :1 (port 5901)"
 
 sleep infinity
