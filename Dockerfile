@@ -208,6 +208,25 @@ RUN chmod +x ~/.xsession
 # Runtime scripts (modeled after rcarmo/docker-templates desktop-chrome)
 USER root
 
+# Configure xrdp to use user's .xsession
+RUN cat > /etc/xrdp/startwm.sh <<'STARTWM'
+#!/bin/sh
+# Load environment
+if test -r /etc/profile; then
+    . /etc/profile
+fi
+if test -r ~/.profile; then
+    . ~/.profile
+fi
+# Run user's xsession
+if test -x ~/.xsession; then
+    exec ~/.xsession
+fi
+# Fallback to openbox directly
+exec openbox
+STARTWM
+RUN chmod +x /etc/xrdp/startwm.sh
+
 # Ensure sshd can start
 RUN mkdir -p /run/sshd /var/run/sshd && chmod 755 /run/sshd /var/run/sshd
 
@@ -222,6 +241,39 @@ rm -rf /tmp/.X* /tmp/ssh-* || true
 # Ensure xrdp can write to its directories
 mkdir -p /var/run/xrdp
 chown xrdp:xrdp /var/run/xrdp
+
+# Create .xsession for user if it doesn't exist (home is a volume)
+if [ ! -f /home/user/.xsession ]; then
+    cat > /home/user/.xsession <<'XSESSION'
+#!/bin/sh
+# xrdp session script
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+# Set up runtime dir for dbus
+export XDG_RUNTIME_DIR=/tmp/runtime-$USER
+mkdir -p $XDG_RUNTIME_DIR
+chmod 700 $XDG_RUNTIME_DIR
+
+# Start dbus session
+if command -v dbus-launch >/dev/null 2>&1; then
+    eval $(dbus-launch --sh-syntax)
+fi
+
+# X resources and background
+[ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+xsetroot -solid grey
+
+# Start panel and terminal in background
+lxpanel &
+lxterminal &
+
+# Run openbox in foreground
+exec openbox
+XSESSION
+    chmod +x /home/user/.xsession
+    chown user:user /home/user/.xsession
+fi
 
 # Start xrdp service
 /usr/sbin/xrdp-sesman
