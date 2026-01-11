@@ -24,6 +24,7 @@ from toadbox_manager.screens.create_instance import CreateInstanceScreen
 from toadbox_manager.screens.folder_picker import FolderPickerScreen
 from toadbox_manager.screens.startup import StartupScreen
 from toadbox_manager.screens.help import HelpScreen
+from toadbox_manager.screens.terminal_demo import TerminalDemoScreen
 
 
 class InstanceManagerApp(App):
@@ -39,6 +40,7 @@ class InstanceManagerApp(App):
         Binding("r", "connect_rdp", "RDP"),
         Binding("f5", "refresh", "Refresh"),
         Binding("h,?", "help", "Help"),
+        Binding("T", "terminal_demo", "Terminal Demo"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -151,10 +153,17 @@ class InstanceManagerApp(App):
     def on_mount(self) -> None:
         table = self.query_one("#instances-table", DataTable)
         table.add_columns("Name", "Status", "CPU", "Memory", "SSH", "RDP", "Priority")
+        # If the demo env var is set, open the embedded terminal demo
+        if os.environ.get("TOADBOX_TERMINAL_DEMO"):
+            self.push_screen(TerminalDemoScreen())
+            return
         if self.docker_client:
             self.push_screen(StartupScreen(), self._handle_startup_result)
         else:
             self.refresh_table()
+
+    def action_terminal_demo(self) -> None:
+        self.push_screen(TerminalDemoScreen())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:  # type: ignore[override]
         mapping = {
@@ -512,6 +521,12 @@ class InstanceManagerApp(App):
             target = container.name if hasattr(container, "name") else container.id
 
             cmd = ["docker", "exec", "-it", "--user", "agent", target, "tmux", "new", "-As0"]
+            # Inform user we're attempting attach
+            try:
+                status_bar = self.query_one("#status-bar", Static)
+                status_bar.update(f"Attaching to {instance.name}...")
+            except Exception:
+                pass
             # Prefer PTY spawn for interactive tty behavior, fall back to execvp or subprocess
             try:
                 self.exit()
@@ -519,6 +534,10 @@ class InstanceManagerApp(App):
                 time.sleep(1.5)
                 # use terminal helper which handles run/pty/execvp + restore
                 ok = terminal.attach_command(cmd, delay=1.5)
+                try:
+                    status_bar.update("")
+                except Exception:
+                    pass
                 if ok:
                     return
                 self.show_error("Failed to attach to container")
@@ -544,7 +563,16 @@ class InstanceManagerApp(App):
                 target = names[0]
                 cmd = ["docker", "exec", "-it", "--user", "agent", target, "tmux", "new", "-As0"]
                 self.exit()
+                try:
+                    status_bar = self.query_one("#status-bar", Static)
+                    status_bar.update(f"Attaching to {instance.name}...")
+                except Exception:
+                    pass
                 ok = terminal.attach_command(cmd, delay=1.5)
+                try:
+                    status_bar.update("")
+                except Exception:
+                    pass
                 if ok:
                     return
                 return
