@@ -5,6 +5,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Optional
+import re
 
 
 class InstanceStatus(Enum):
@@ -33,13 +34,19 @@ class ToadboxInstance:
     @property
     def service_name(self) -> str:
         """Generate docker-compose service name based on folder."""
-        return Path(self.workspace_folder).name.replace("-", "_").lower()
+        # Prefer a sanitized instance `name` if provided, otherwise fall back to workspace folder name
+        base = self.name or Path(self.workspace_folder).name
+        # sanitize: allow letters/numbers/underscore, convert other chars to underscore
+        sanitized = re.sub(r"[^0-9a-zA-Z]+", "_", base).strip("_").lower()
+        return sanitized or Path(self.workspace_folder).name.replace("-", "_").lower()
 
     @property
     def hostname(self) -> str:
         """Generate hostname based on folder."""
-        folder_name = Path(self.workspace_folder).name
-        return f"toadbox-{folder_name}"
+        # Use the instance name for hostname if available, otherwise workspace folder
+        base = self.name or Path(self.workspace_folder).name
+        sanitized = re.sub(r"[^0-9a-zA-Z]+", "-", base).strip("-").lower()
+        return f"toadbox-{sanitized}"
 
     def to_dict(self) -> Dict:
         data = asdict(self)
