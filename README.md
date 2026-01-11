@@ -8,6 +8,10 @@ Toadbox is a simple Docker-based coding agent sandbox featuring [Batrachian Toad
 
 The container provides a Debian userland, Homebrew, (optional) Docker-in-Docker, `ssh`/`mosh` server, and a minimal VNC desktop environment.
 
+## Motivation
+
+I found myself wanting to quickly spin up isolated coding environments for AI agents, without having to deal with complex orchestration tools or heavy VMs, and also wanting to limit CPU usage from [Batrachian Toad](https://github.com/batrachianai/toad) itself.
+
 ## Features
 
 - **[Batrachian Toad](https://github.com/batrachianai/toad)**: A unified interface for AI in your terminal
