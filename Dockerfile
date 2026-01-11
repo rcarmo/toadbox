@@ -156,6 +156,10 @@ RUN apt-get update && \
     # X11 utilities
     x11-utils \
     x11-xserver-utils \
+    # D-Bus (required for openbox-session to stay running)
+    dbus-x11 \
+    # Fallback session for VNC debugging
+    xterm \
     # Cleanup
     && apt-get autoremove -y \
     && apt-get clean \
@@ -174,16 +178,34 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | HOME=/home/user sh && \
 USER user
 WORKDIR /home/user
 RUN mkdir -p ~/.vnc && \
-    echo "#!/bin/sh" > ~/.vnc/xstartup && \
-    echo "unset SESSION_MANAGER" >> ~/.vnc/xstartup && \
-    echo "unset DBUS_SESSION_BUS_ADDRESS" >> ~/.vnc/xstartup && \
-    echo "xrdb $HOME/.Xresources" >> ~/.vnc/xstartup && \
-    echo "xsetroot -solid grey" >> ~/.vnc/xstartup && \
-    echo "openbox-session &" >> ~/.vnc/xstartup && \
-    echo "lxpanel &" >> ~/.vnc/xstartup && \
-    echo "lxterminal &" >> ~/.vnc/xstartup && \
-    echo "exec tail -f /dev/null" >> ~/.vnc/xstartup && \
-    chmod +x ~/.vnc/xstartup
+    cat > ~/.vnc/xstartup <<'XSTARTUP'
+#!/bin/sh
+# VNC xstartup - must keep a long-running process in the foreground
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+# Set up runtime dir for dbus
+export XDG_RUNTIME_DIR=/tmp/runtime-$USER
+mkdir -p $XDG_RUNTIME_DIR
+chmod 700 $XDG_RUNTIME_DIR
+
+# Start dbus session (required for openbox-session)
+if command -v dbus-launch >/dev/null 2>&1; then
+    eval $(dbus-launch --sh-syntax)
+fi
+
+# X resources and background
+[ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+xsetroot -solid grey
+
+# Start panel and terminal in background
+lxpanel &
+lxterminal &
+
+# Run openbox in foreground (NOT openbox-session which can exit early)
+exec openbox
+XSTARTUP
+RUN chmod +x ~/.vnc/xstartup
 
 # Runtime scripts (modeled after rcarmo/docker-templates desktop-chrome)
 USER root
@@ -222,28 +244,16 @@ if [[ "$AUTHMODE" != *"SecurityTypes None"* ]]; then
     su - user -c "chmod 600 ~/.vnc/passwd"
 fi
 
-# Ensure we have a minimally functional xstartup even if the user's xstartup is broken.
-if [ ! -f /home/user/.vnc/xstartup ]; then
-    install -d -m 700 -o user -g user /home/user/.vnc
-    cat > /home/user/.vnc/xstartup <<'XEOF'
-#!/bin/sh
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-xsetroot -solid grey
-
-# Start a session that keeps running
-openbox-session &
-lxpanel &
-lxterminal &
-
-exec tail -f /dev/null
-XEOF
-    chown user:user /home/user/.vnc/xstartup
-    chmod +x /home/user/.vnc/xstartup
-fi
+# xstartup is baked into the image; no need to regenerate at runtime
 
 # start VNC server (force explicit xstartup to avoid "exited too early" issues)
-su - user -c "vncserver :1 -xstartup /home/user/.vnc/xstartup $AUTHMODE $SETTINGS"
+# NOTE: TigerVNC expects xstartup to run a long-lived X session in the foreground.
+# Some lightweight desktop setups still exit early; in that case, fall back to xterm
+# so the server stays up and the container doesn't restart-loop.
+if ! su - user -c "vncserver :1 -xstartup /home/user/.vnc/xstartup $AUTHMODE $SETTINGS"; then
+    echo "VNC xstartup failed; falling back to /usr/bin/xterm" >&2
+    su - user -c "vncserver :1 -xstartup /usr/bin/xterm $AUTHMODE $SETTINGS"
+fi
 echo "VNC server started on :1 (port 5901)"
 
 sleep infinity
