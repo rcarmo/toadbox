@@ -28,7 +28,7 @@ def test_toadbox_instance_serialization_roundtrip():
 
 
 def test_service_name_and_hostname():
-    inst = ToadboxInstance(name="x", workspace_folder="/home/user/my-box")
+    inst = ToadboxInstance(name="my-box", workspace_folder="/home/user/my-box")
     assert inst.service_name == "my_box"
     assert inst.hostname.startswith("toadbox-my-box")
 
