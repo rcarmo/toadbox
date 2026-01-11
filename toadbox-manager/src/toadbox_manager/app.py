@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import docker
+import yaml
 from docker.errors import DockerException
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -70,6 +71,10 @@ class InstanceManagerApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.config_file = Path.home() / ".toadbox-manager.json"
+        self.compose_dir = Path.home() / ".toadbox-manager"
+        self.compose_dir.mkdir(exist_ok=True)
+        self.compose_path = self.compose_dir / "docker-compose.yml"
+        self.compose_project = "toadbox-manager"
         self.instances: Dict[str, ToadboxInstance] = {}
         self.docker_client: Optional[docker.DockerClient] = None
         self.load_config()
@@ -154,6 +159,8 @@ class InstanceManagerApp(App):
         data = {"instances": {name: inst.to_dict() for name, inst in self.instances.items()}}
         with open(self.config_file, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2)
+        # Keep the unified compose file in sync with saved instances
+        self._write_compose()
 
     def refresh_table(self) -> None:
         table = self.query_one("#instances-table", DataTable)
@@ -195,12 +202,37 @@ class InstanceManagerApp(App):
         self.push_screen(CreateInstanceScreen(selected))
 
     def create_instance(self, instance: ToadboxInstance) -> None:
+        for existing_name, existing in self.instances.items():
+            conflicts = []
+            if existing.ssh_port == instance.ssh_port:
+                conflicts.append("SSH")
+            if existing.rdp_port == instance.rdp_port:
+                conflicts.append("RDP")
+            if conflicts:
+                ports = ", ".join(conflicts)
+                self.show_error(f"Ports already in use by '{existing_name}' ({ports})")
+                return
         if instance.name in self.instances:
             self.show_error(f"Instance '{instance.name}' already exists")
             return
         self.instances[instance.name] = instance
         self.save_config()
         self.refresh_table()
+
+    def suggest_ports(self, ssh_start: int = 2222, rdp_start: int = 3390) -> tuple[int, int]:
+        """Return the next available (ssh_port, rdp_port) not used by existing instances."""
+        used_ssh = {inst.ssh_port for inst in self.instances.values()}
+        used_rdp = {inst.rdp_port for inst in self.instances.values()}
+
+        ssh_port = ssh_start
+        while ssh_port in used_ssh:
+            ssh_port += 1
+
+        rdp_port = rdp_start
+        while rdp_port in used_rdp:
+            rdp_port += 1
+
+        return ssh_port, rdp_port
 
     def action_start_instance(self) -> None:
         inst = self.get_selected_instance()
@@ -252,7 +284,7 @@ class InstanceManagerApp(App):
     async def _delete_async(self, instance: ToadboxInstance) -> None:
         if instance.status == InstanceStatus.RUNNING:
             await self._stop_async(instance)
-        ok, detail = self._run_compose(instance, "down", include_volumes=True)
+        ok, detail = self._run_compose(instance, "rm", include_volumes=True)
         if ok:
             self.instances.pop(instance.name, None)
             self.save_config()
@@ -260,123 +292,116 @@ class InstanceManagerApp(App):
             self.show_error(f"Failed to delete: {detail}")
         self.refresh_table()
 
-    def _run_compose(self, instance: ToadboxInstance, action: str, include_volumes: bool = False) -> tuple[bool, str]:
-        compose_path = self._write_compose(instance)
-        env = os.environ.copy()
-        env.update(
-            {
-                "COMPOSE_PROJECT_NAME": instance.service_name,
-                "WORKSPACE_PATH": instance.workspace_folder,
-                "SSH_PORT": str(instance.ssh_port),
-                "RDP_PORT": str(instance.rdp_port),
-                "PUID": str(instance.puid),
-                "PGID": str(instance.pgid),
-                "CPU_LIMITS": str(instance.cpu_cores),
-                "MEMORY_LIMITS": f"{instance.memory_mb}M",
-            }
-        )
+    def _build_compose_spec(self) -> Dict[str, Any]:
+        services: Dict[str, Any] = {}
+        volumes: Dict[str, Any] = {}
 
+        for inst in self.instances.values():
+            service_name = inst.service_name
+            services[service_name] = {
+                "image": "toadbox",
+                "container_name": inst.hostname,
+                "hostname": inst.hostname,
+                "restart": "unless-stopped",
+                "environment": [
+                    f"PUID={inst.puid}",
+                    f"PGID={inst.pgid}",
+                    "TERM=xterm-256color",
+                    "DISPLAY=:1",
+                ],
+                "ports": [
+                    f"{inst.ssh_port}:22",
+                    f"{inst.rdp_port}:3389",
+                ],
+                "volumes": [
+                    f"{inst.workspace_folder}:/workspace",
+                    f"{service_name}_docker_data:/var/lib/docker",
+                    f"{service_name}_home:/home/agent",
+                ],
+                "networks": ["toadbox_network"],
+                "privileged": True,
+                "deploy": {
+                    "resources": {
+                        "limits": {
+                            "cpus": f"{inst.cpu_cores}",
+                            "memory": f"{inst.memory_mb}M",
+                        }
+                    }
+                },
+            }
+
+            volumes[f"{service_name}_docker_data"] = {"name": f"{service_name}_docker_data"}
+            volumes[f"{service_name}_home"] = {"name": f"{service_name}_home"}
+
+        compose_dict: Dict[str, Any] = {
+            "version": "3.8",
+            "services": services,
+            "volumes": volumes,
+            "networks": {"toadbox_network": {"driver": "bridge"}},
+        }
+        return compose_dict
+
+    def _write_compose(self) -> Path:
+        """Write a single docker-compose file containing all instances."""
+        self.compose_dir.mkdir(exist_ok=True)
+        compose_dict = self._build_compose_spec()
+        self.compose_path.write_text(yaml.dump(compose_dict, default_flow_style=False), encoding="utf-8")
+        return self.compose_path
+
+    def _run_compose(self, instance: ToadboxInstance, action: str, include_volumes: bool = False) -> tuple[bool, str]:
+        compose_path = self._write_compose()
         docker_bin = shutil.which("docker")
         docker_compose_bin = shutil.which("docker-compose")
-        compose_cmd: list[str] | None = None
+        base_cmd: list[str] | None = None
 
         if docker_bin:
             probe = subprocess.run([docker_bin, "compose", "version"], capture_output=True, text=True, check=False)
             if probe.returncode == 0:
-                compose_cmd = [docker_bin, "compose", "-f", str(compose_path), "-p", instance.service_name, action]
-        if compose_cmd is None and docker_compose_bin:
-            compose_cmd = [docker_compose_bin, "-f", str(compose_path), "-p", instance.service_name, action]
-        if compose_cmd is None:
+                base_cmd = [docker_bin, "compose", "-f", str(compose_path), "-p", self.compose_project]
+        if base_cmd is None and docker_compose_bin:
+            base_cmd = [docker_compose_bin, "-f", str(compose_path), "-p", self.compose_project]
+        if base_cmd is None:
             return False, "docker compose not found"
+
         if action == "up":
-            compose_cmd.append("-d")
-        if include_volumes and action == "down":
-            compose_cmd.append("-v")
+            cmd = base_cmd + ["up", "-d", instance.service_name]
+        elif action == "stop":
+            cmd = base_cmd + ["stop", instance.service_name]
+        elif action == "rm":
+            cmd = base_cmd + ["rm", "-s", "-f"]
+            if include_volumes:
+                cmd.append("-v")
+            cmd.append(instance.service_name)
+        else:
+            cmd = base_cmd + [action, instance.service_name]
 
         result = subprocess.run(
-            compose_cmd,
-            cwd=compose_path.parent,
+            cmd,
+            cwd=self.compose_path.parent,
             capture_output=True,
             text=True,
-            env=env,
+            env=os.environ.copy(),
             check=False,
         )
         output = (result.stderr or "").strip() or (result.stdout or "").strip()
         return result.returncode == 0, output
 
-    def _write_compose(self, instance: ToadboxInstance) -> Path:
-        if instance.compose_file:
-            return Path(instance.compose_file)
-        compose_dir = Path(instance.workspace_folder) / ".toadbox"
-        compose_dir.mkdir(exist_ok=True)
-        compose_path = compose_dir / "docker-compose.yml"
-        compose_yaml = self._generate_compose(instance)
-        compose_path.write_text(compose_yaml, encoding="utf-8")
-        instance.compose_file = str(compose_path)
-        return compose_path
-
-    def _generate_compose(self, instance: ToadboxInstance) -> str:
-        service_name = instance.service_name
-        compose_dict: Dict[str, Any] = {
-            "version": "3.8",
-            "services": {
-                service_name: {
-                    "image": "toadbox",
-                    "container_name": instance.hostname,
-                    "hostname": instance.hostname,
-                    "restart": "unless-stopped",
-                    "environment": [
-                        f"PUID={instance.puid}",
-                        f"PGID={instance.pgid}",
-                        "TERM=xterm-256color",
-                        "DISPLAY=:1",
-                    ],
-                    "ports": [
-                        f"{instance.ssh_port}:22",
-                        f"{instance.rdp_port}:3389",
-                    ],
-                    "volumes": [
-                        f"{instance.workspace_folder}:/workspace",
-                        f"{service_name}_docker_data:/var/lib/docker",
-                        f"{service_name}_home:/home/agent",
-                    ],
-                    "networks": ["toadbox_network"],
-                    "privileged": True,
-                    "deploy": {
-                        "resources": {
-                            "limits": {
-                                "cpus": f"{instance.cpu_cores}",
-                                "memory": f"{instance.memory_mb}M",
-                            }
-                        }
-                    },
-                }
-            },
-            "volumes": {
-                f"{service_name}_docker_data": {"name": f"{service_name}_docker_data"},
-                f"{service_name}_home": {"name": f"{service_name}_home"},
-            },
-            "networks": {"toadbox_network": {"driver": "bridge"}},
-        }
-        import yaml
-
-        return yaml.dump(compose_dict, default_flow_style=False)
-
     def _get_compose_status(self, instance: ToadboxInstance) -> InstanceStatus:
-        if not instance.compose_file:
+        if not self.compose_path.exists():
             return InstanceStatus.STOPPED
-        compose_path = Path(instance.compose_file)
         docker_bin = shutil.which("docker")
         docker_compose_bin = shutil.which("docker-compose")
-        cmd: list[str] | None = None
+        base_cmd: list[str] | None = None
         if docker_bin:
             probe = subprocess.run([docker_bin, "compose", "version"], capture_output=True, text=True, check=False)
             if probe.returncode == 0:
-                cmd = [docker_bin, "compose", "-f", str(compose_path), "-p", instance.service_name, "ps", "--services", "--filter", "status=running"]
-        if cmd is None and docker_compose_bin:
-            cmd = [docker_compose_bin, "-f", str(compose_path), "-p", instance.service_name, "ps", "--services", "--filter", "status=running"]
-        if cmd is None:
+                base_cmd = [docker_bin, "compose", "-f", str(self.compose_path), "-p", self.compose_project]
+        if base_cmd is None and docker_compose_bin:
+            base_cmd = [docker_compose_bin, "-f", str(self.compose_path), "-p", self.compose_project]
+        if base_cmd is None:
             return InstanceStatus.ERROR
+
+        cmd = base_cmd + ["ps", "--services", "--filter", "status=running", instance.service_name]
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode == 0 and instance.service_name in result.stdout:
             return InstanceStatus.RUNNING
@@ -427,6 +452,7 @@ class InstanceManagerApp(App):
         asyncio.create_task(self._refresh_async())
 
     async def _refresh_async(self) -> None:
+        self._write_compose()
         for inst in self.instances.values():
             inst.status = self._get_compose_status(inst)
         self.save_config()

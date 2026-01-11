@@ -134,6 +134,16 @@ class CreateInstanceScreen(ModalScreen[Optional[ToadboxInstance]]):
         self.query_one("#create-form", ScrollableContainer).focus()
         self.query_one("#name-input", Input).focus()
 
+        # Auto-suggest free ports based on existing instances
+        if hasattr(self.app, "suggest_ports"):
+            ssh_suggest, rdp_suggest = self.app.suggest_ports()
+            ssh_input = self.query_one("#ssh-port-input", Input)
+            rdp_input = self.query_one("#rdp-port-input", Input)
+            if not ssh_input.value:
+                ssh_input.value = str(ssh_suggest)
+            if not rdp_input.value:
+                rdp_input.value = str(rdp_suggest)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "create-button":
             self._create_instance()
