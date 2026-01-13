@@ -2,18 +2,18 @@
 FROM debian:bookworm-slim
 
 # Environment variables
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TERM=xterm-256color
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
-
+ENV DEBIAN_FRONTEND=noninteractive \
+    TERM=xterm-256color \
+    LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8
+    
 # Set working directory
 WORKDIR /tmp
 
 # Install locale package first
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends locales && \
+    apt-get install -y --no-install-recommends locales tzdata && \
     sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
     locale-gen en_US.UTF-8 && \
     update-locale LANG=en_US.UTF-8 && \
@@ -21,12 +21,9 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
-
-# Basic system update and install core utilities
-RUN apt-get update && apt-get upgrade -y && \
+# Basic system update and core packages
+RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     # Core utilities
     ca-certificates \
@@ -49,12 +46,14 @@ RUN apt-get update && apt-get upgrade -y && \
     openssh-server \
     mosh \
     # Network tools
+    bmon \
     net-tools \
     iputils-ping \
     dnsutils \
     # Build essentials
     build-essential \
     cmake \
+    make \
     pkg-config \
     # Python dependencies
     python3-dev \
@@ -129,11 +128,13 @@ RUN apt-get update && \
 # Install xrdp and minimal desktop
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+    # Desktop
+    xfce4 \
+    xfce4-goodies \
+    firefox-esr \
     # xrdp for remote desktop
     xrdp \
     xorgxrdp \
-    # Window manager
-    openbox \
     # Terminal emulator
     lxterminal \
     # File manager
@@ -156,6 +157,7 @@ RUN apt-get update && \
     x11-xserver-utils \
     # D-Bus (required for desktop session)
     dbus-x11 \
+    xdg-utils \
     # Terminal fallback
     xterm \
     # Cleanup
@@ -171,79 +173,66 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | HOME=/home/agent sh && \
     echo 'source /home/agent/.local/bin/env' >> /home/agent/.bashrc && \
     /home/agent/.local/bin/uv tool install -U batrachian-toad
 
+# Visual Studio Code
+USER root
+RUN ARCH="$(dpkg --print-architecture)" \
+ && case "$ARCH" in \
+        amd64) VS_DEB_URL="https://update.code.visualstudio.com/latest/linux-deb-x64/stable" ;; \
+        arm64) VS_DEB_URL="https://update.code.visualstudio.com/latest/linux-deb-arm64/stable" ;; \
+        *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac \
+ && wget "$VS_DEB_URL" -O /tmp/vscode.deb \
+ && dpkg -i /tmp/vscode.deb \
+ && rm /tmp/vscode.deb
+    
 # Set up xrdp session configuration
 USER agent
 WORKDIR /home/agent
-RUN mkdir -p ~/.config/openbox && \
-    cat > ~/.xsession <<'XSESSION'
+RUN cat > ~/.xsession <<'XSESSION'
 #!/bin/sh
 # xrdp session script
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
-
 # Set up runtime dir for dbus
 export XDG_RUNTIME_DIR=/tmp/runtime-$USER
 mkdir -p $XDG_RUNTIME_DIR
 chmod 700 $XDG_RUNTIME_DIR
-
 # Start dbus session
 if command -v dbus-launch >/dev/null 2>&1; then
     eval $(dbus-launch --sh-syntax)
 fi
-
 # X resources and background
 [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
 xsetroot -solid grey
-
-# Start panel and terminal in background
-lxpanel &
-lxterminal &
-
-# Run openbox in foreground
-exec openbox
+exec startxfce4
 XSESSION
 RUN chmod +x ~/.xsession
 
 # Runtime scripts (modeled after rcarmo/docker-templates desktop-chrome)
 USER root
-
 # Configure xrdp to use agent's .xsession
 RUN cat > /etc/xrdp/startwm.sh <<'STARTWM'
 #!/bin/bash
 set -e
-
 # Wait for X to be ready
 sleep 1
-
 # Set up DISPLAY if not set
 export DISPLAY=${DISPLAY:-:10}
-
 # Ensure agent-local tools (like toad) are on PATH
 export PATH="$HOME/.local/bin:$PATH"
-
 # Set up runtime dir
 export XDG_RUNTIME_DIR=/tmp/runtime-$(whoami)
 mkdir -p $XDG_RUNTIME_DIR
 chmod 700 $XDG_RUNTIME_DIR
-
 # Unset problematic variables
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
-
 # Start dbus session
 if command -v dbus-launch >/dev/null 2>&1; then
     eval $(dbus-launch --sh-syntax)
 fi
-
-# Set background
 xsetroot -solid grey || true
-
-# Start panel and terminal in background
-lxpanel &
-lxterminal &
-
-# Run openbox in foreground - this keeps the session alive
-exec openbox
+exec startxfce4
 STARTWM
 RUN chmod +x /etc/xrdp/startwm.sh
 
@@ -284,12 +273,8 @@ fi
 [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
 xsetroot -solid grey
 
-# Start panel and terminal in background
-lxpanel &
-lxterminal &
-
 # Run openbox in foreground
-exec openbox
+exec startxfce4
 XSESSION
     chmod +x /home/agent/.xsession
     chown agent:agent /home/agent/.xsession
