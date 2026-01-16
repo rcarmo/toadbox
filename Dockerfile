@@ -175,8 +175,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | HOME=/home/agent sh && \
     echo 'export PATH="/home/agent/.local/bin:$PATH"' >> /home/agent/.bashrc && \
     echo 'source /home/agent/.local/bin/env' >> /home/agent/.bashrc && \
     /home/agent/.local/bin/uv tool install -U batrachian-toad && \
-    /home/agent/.local/bin/uv tool install -U mistral-vibe && \
-    
+    /home/agent/.local/bin/uv tool install -U mistral-vibe 
 
 # Visual Studio Code
 USER root
