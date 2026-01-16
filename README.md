@@ -4,7 +4,7 @@
 
 There's no perfect way to sandbox agents (yet), but at least we can try limiting the damage using containers.
 
-Toadbox is a simple Docker-based coding agent sandbox featuring [Batrachian Toad](https://github.com/batrachianai/toad) as a general-purpose coding assistant TUI, which will help you boostrap pretty much _any_ current AI agent.
+Toadbox is a simple Docker-based coding agent sandbox featuring [Batrachian Toad](https://github.com/batrachianai/toad) as a general-purpose coding assistant TUI, which will help you boostrap pretty much _any_ current AI agent. For convenience, OpenCode and Mistral Vibe are also pre-installed
 
 The container provides a Debian userland, Homebrew, (optional) Docker-in-Docker, `ssh`/`mosh` server, and a minimal RDP desktop environment.
 
@@ -19,7 +19,8 @@ I found myself wanting to quickly spin up isolated coding environments for AI ag
 - **Visual Studio Code**: for ARM/Intel
 - **Package Managers**: Homebrew and APT package management 
 - **Docker-in-Docker**: Docker support for containerized workflows (requires you to run the container in privileged mode, so be careful)
-- **Remote Access**: SSH (port 2222) and RDP (port 3390) connectivity
+- **Service Control**: Fine-grained control over which services start using environment variables (`ENABLE_DOCKER`, `ENABLE_SSH`, `ENABLE_RDP`)
+- **Remote Access**: SSH (port 22) and RDP (port 3389) connectivity (disabled by default)
 - **Minimal Desktop**: XFCE desktop with minimal utilities, so you can run graphical applications, Playwright, etc.
 - **Persistent Storage**: optional data and agent home directory persistence
 
@@ -28,6 +29,32 @@ I found myself wanting to quickly spin up isolated coding environments for AI ag
 - [x] CPU and memory limits (basic Docker resource constraints)
 - [ ] Network isolation options
 - [ ] Other sandboxing techniques (gVisor, Kata Containers, etc.)
+
+## Service Configuration
+
+Toadbox now supports environment variables to control which services start at container launch:
+
+- `ENABLE_DOCKER=true` - Start Docker daemon (for Docker-in-Docker support)
+- `ENABLE_SSH=true` - Start SSH server (port 22)
+- `ENABLE_RDP=true` - Start RDP server (port 3389)
+
+**Default behavior:** All services are disabled unless explicitly enabled.
+
+### Examples:
+
+```bash
+# Default - all services disabled
+docker run -d toadbox
+
+# Enable only Docker daemon
+docker run -d -e ENABLE_DOCKER=true toadbox
+
+# Enable Docker and SSH for development
+docker run -d -e ENABLE_DOCKER=true -e ENABLE_SSH=true -p 22:22 toadbox
+
+# Full desktop experience with all services
+docker run -d -e ENABLE_DOCKER=true -e ENABLE_SSH=true -e ENABLE_RDP=true -p 22:22 -p 3389:3389 toadbox
+```
 
 ## Quick Start
 
@@ -65,7 +92,22 @@ The Toadbox Manager is a first stab at a TUI for easily managing multiple toadbo
 If you prefer to use docker-compose directly:
 
 1. Clone or download this repository
-2. Run the container:
+2. Create a `docker-compose.override.yml` file to enable services:
+
+```yaml
+version: '3.8'
+services:
+  toadbox:
+    environment:
+      - ENABLE_DOCKER=true
+      - ENABLE_SSH=true
+      - ENABLE_RDP=true
+    ports:
+      - "22:22"
+      - "3389:3389"
+```
+
+3. Run the container:
 
 ```bash
 docker-compose up -d
@@ -75,14 +117,14 @@ docker-compose up -d
 
 **Via RDP (Graphical Desktop):**
 
-- RDP Client: `localhost:3390`
+- RDP Client: `localhost:3389`
 - Username: `agent`
 - Password: `changeme`
 
 **Via SSH (Terminal):**
 
 ```bash
-ssh agent@localhost -p 2222
+ssh agent@localhost -p 22
 # Password: changeme
 ```
 
@@ -92,11 +134,14 @@ ssh agent@localhost -p 2222
 # Build the image
 docker build -t toadbox .
 
-# Run the container
+# Run the container with selected services
 docker run -d \
   --name toadbox \
   --privileged \
-  -p 2222:22 \
+  -e ENABLE_DOCKER=true \
+  -e ENABLE_SSH=true \
+  -e ENABLE_RDP=true \
+  -p 22:22 \
   -p 3389:3389 \
   -v $(pwd):/workspace \
   toadbox
@@ -126,9 +171,11 @@ toad -a open-hands
 
 ## Security Notes
 
+- **Service Control:** By default, all services (Docker, SSH, RDP) are disabled. Explicitly enable only what you need using environment variables.
 - Default passwords are weak - change them for production use
 - The container needs to run in privileged mode for Docker-in-Docker to be available to your agents (it's better than nothing)
 - Consider using SSH keys instead of password authentication
+- For production use, consider disabling unnecessary services and changing default credentials
 
 For extra (in)security, consider running the manager with a remote Docker socket to a VM where the actual containers run.
 

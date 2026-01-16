@@ -97,13 +97,16 @@ RUN echo '#!/bin/bash' > /entrypoint-user.sh && \
 # Set user home
 ENV HOME=/home/agent
 
-# Install Homebrew
+# Install Homebrew, OpenCode and bun
 USER agent
 WORKDIR /home/agent
 RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && \
     echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/agent/.bashrc && \
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && \
-    brew update
+    brew update && \
+    brew install node golang && \
+    npm i -g opencode-ai && \
+    curl -fsSL https://bun.sh/install | bash
 
 # Switch back to root for Docker installation
 USER root
@@ -165,13 +168,15 @@ RUN apt-get update && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install UV (Python package manager)
+# Install UV (Python package manager) and some agents
 USER agent
 WORKDIR /home/agent
 RUN curl -LsSf https://astral.sh/uv/install.sh | HOME=/home/agent sh && \
     echo 'export PATH="/home/agent/.local/bin:$PATH"' >> /home/agent/.bashrc && \
     echo 'source /home/agent/.local/bin/env' >> /home/agent/.bashrc && \
-    /home/agent/.local/bin/uv tool install -U batrachian-toad
+    /home/agent/.local/bin/uv tool install -U batrachian-toad && \
+    /home/agent/.local/bin/uv tool install -U mistral-vibe && \
+    
 
 # Visual Studio Code
 USER root
@@ -280,18 +285,24 @@ XSESSION
     chown agent:agent /home/agent/.xsession
 fi
 
-# Start xrdp service
-/usr/sbin/xrdp-sesman
-/usr/sbin/xrdp --nodaemon &
-XRDP_PID=$!
+# Start xrdp service only if ENABLE_RDP is set to true
+if [ "${ENABLE_RDP:-false}" = "true" ]; then
+    /usr/sbin/xrdp-sesman
+    /usr/sbin/xrdp --nodaemon &
+    XRDP_PID=$!
 
-echo "xrdp started on port 3389"
-echo "Connect with any RDP client using:"
-echo "  Username: agent"
-echo "  Password: changeme"
+    echo "xrdp started on port 3389"
+    echo "Connect with any RDP client using:"
+    echo "  Username: agent"
+    echo "  Password: changeme"
 
-# Wait for xrdp to exit
-wait $XRDP_PID
+    # Wait for xrdp to exit
+    wait $XRDP_PID
+else
+    echo "RDP service disabled (set ENABLE_RDP=true to enable)"
+    # Keep container running
+    tail -f /dev/null
+fi
 EOF
 RUN chmod +x /quickstart.sh
 
@@ -306,11 +317,33 @@ echo "SSH Password: changeme"
 echo "RDP: Connect to port 3389 with agent/changeme"
 echo ""
 
-echo "Starting sshd..."
-/usr/sbin/sshd
+# Start Docker daemon only if ENABLE_DOCKER is set to true
+if [ "${ENABLE_DOCKER:-false}" = "true" ]; then
+    echo "Starting Docker daemon..."
+    /etc/init.d/docker start
+    echo "Docker daemon started"
+else
+    echo "Docker daemon disabled (set ENABLE_DOCKER=true to enable)"
+fi
 
-echo "Starting xrdp..."
-exec /quickstart.sh
+# Start SSH service only if ENABLE_SSH is set to true
+if [ "${ENABLE_SSH:-false}" = "true" ]; then
+    echo "Starting sshd..."
+    /usr/sbin/sshd
+else
+    echo "SSH service disabled (set ENABLE_SSH=true to enable)"
+fi
+
+# Start xrdp service only if ENABLE_RDP is set to true
+if [ "${ENABLE_RDP:-false}" = "true" ]; then
+    echo "Starting xrdp..."
+    exec /quickstart.sh
+else
+    echo "RDP service disabled (set ENABLE_RDP=true to enable)"
+    # Keep container running if neither service is enabled
+    echo "No services enabled, keeping container alive..."
+    tail -f /dev/null
+fi
 EOF
 RUN chmod +x /entrypoint.sh
 
