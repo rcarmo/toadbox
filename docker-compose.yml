@@ -1,32 +1,40 @@
+---
+x-env: &env
+  DISPLAY: ":10"
+  TERM: xterm-256color
+  PUID: "${PUID:-1000}"
+  PGID: "${PGID:-1000}"
+  TZ: Europe/Lisbon
+
 x-agent: &agent
   image: ghcr.io/rcarmo/agentbox:latest
   environment:
-    - DISPLAY=:1
-    - TERM=xterm-256color
-    - PUID=${PUID:-1000}
-    - PGID=${PGID:-1000}
+    <<: *env
+    WORKSPACE_NAME: default
   restart: unless-stopped
   deploy:
     resources:
       limits:
         cpus: '${CPU_LIMITS:-2}'
         memory: '${MEMORY_LIMITS:-4G}'
-  #privileged: true  # Required for Docker-in-Docker
+  privileged: true  # Required for Docker-in-Docker
   networks:
     - the_matrix
+  volumes:
+    - local:/home/agent/.local
+    - vibe:/home/agent/.vibe
+    - ./workspaces/${WORKSPACE_NAME:-default}:/workspace
 
 services:
   syncthing:
     image: syncthing/syncthing:latest
-    container_name: agentbox-syncthing
+    container_name: agent-syncthing
     hostname: sandbox
     environment:
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - TZ=Europe/Lisbon
-      - HOME=/var/syncthing/config
-      - STGUIADDRESS=0.0.0.0:8384
-      - GOMAXPROCS=1
+      <<: *env
+      HOME: /var/syncthing/config
+      STGUIADDRESS: 0.0.0.0:8384
+      GOMAXPROCS: "1"
     volumes:
       - ./workspaces:/workspaces:Z
       - ./config:/var/syncthing/config:Z
@@ -44,45 +52,74 @@ services:
     <<: *agent
     container_name: agent-gotel
     hostname: gotel
+    environment:
+      <<: *env
+      ENABLE_DOCKER: "true"
+      WORKSPACE_NAME: gotel
     ports:
-      - "2222:22"    # SSH
-      - "3390:3389"  # RDP (xrdp)
       - "3000:3000"  # web service
-    volumes:
-      - home:/home/agent
-      - ./workspaces/gotel:/workspace
+      - "3020:3020"  # web service
 
   guerite:
     <<: *agent
     container_name: agent-guerite
     hostname: guerite
-    ports:
-      - "2223:22"    # SSH
-      - "3391:3389"  # RDP (xrdp)
-      - "3001:3000"  # web service
-    volumes:
-      - home:/home/agent
-      - ./workspaces/guerite:/workspace
+    environment:
+      <<: *env
+      ENABLE_DOCKER: "true"
+      WORKSPACE_NAME: guerite
 
   feed-summarizer:
     <<: *agent
     container_name: agent-feed-summarizer
     hostname: feed-summarizer
+    environment:
+      <<: *env
+      WORKSPACE_NAME: feed-summarizer
+
+  go-html5:
+    <<: *agent
+    container_name: agent-go-html5
+    hostname: go-html5
     ports:
-      - "2224:22"    # SSH
-      - "3392:3389"  # RDP (xrdp)
-      - "3003:3000"  # web service
-    volumes:
-      - home:/home/agent
-      - ./workspaces/feed-summarizer:/workspace
+      - "3000:3000"  # web service
+    environment:
+      <<: *env
+      WORKSPACE_NAME: go-html5
+
+  toad:
+    <<: *agent
+    container_name: agent-toad
+    hostname: toad
+    ports:
+      - "8001:8000"  # web service
+    environment:
+      <<: *env
+      WORKSPACE_NAME: toad
+
+  agentbox:
+    <<: *agent
+    container_name: agent-agentbox
+    hostname: agent
+    ports:
+      - "8002:8000"  # web service
+    environment:
+      <<: *env
+      WORKSPACE_NAME: agentbox
 
 volumes:
-  home:
+  vibe:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ./home
+      device: ./home/.vibe
+  local:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./home/.local
 
 networks:
   the_matrix:
