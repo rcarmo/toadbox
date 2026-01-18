@@ -17,6 +17,7 @@ I found myself wanting to quickly spin up isolated coding environments for AI ag
 The container provides a Debian userland, Homebrew, (optional) Docker-in-Docker, `ssh`/`mosh` server, and a minimal RDP desktop environment to run these:
 
 - **[Batrachian Toad](https://github.com/batrachianai/toad)**: A unified interface for AI in your terminal
+- **[Copilot CLI](https://github.com/github/copilot-cli)**: My usual go-to
 - **[Mistral Vibe](https://github.com/mistralai/mistral-vibe)**: A nice coding assistant pre-installed
 - **[OpenCode](https://github.com/anomalyco/opencode/)**: Another coding assistant pre-installed
 - **Development Environment**: Debian Bookworm with essential development tools
