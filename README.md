@@ -63,6 +63,16 @@ docker run -d -e ENABLE_DOCKER=true -e ENABLE_SSH=true -e ENABLE_RDP=true -p 22:
 
 ## Quick Start
 
+### Docker Compose
+
+The `docker compose` file includes an example of a set of agent workspaces that you can customize. Use the `Makefile` to quickly start/stop the instances and enter one of them by typing:
+
+```bash
+make enter-<instance-name>
+```
+
+That will start (or resume) a `tmux` session inside the container, where you can run your agents.
+
 ### Using Agentbox Manager (still WIP)
 
 ![Instance Manager](docs/screenshot.svg)
